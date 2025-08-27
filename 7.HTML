@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+<title>F1 — Oval Circuit • Finalized Finish (Zebra) • Stable AI • Menu</title>
+<style>
+  :root { --track-width: 140; }
+  html,body{height:100%;margin:0;background:#0b0b0b;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;overflow:hidden;}
+  canvas{display:block;width:100vw;height:100vh;background:#1b2b1b;touch-action:none;}
+  #hud,#aiHud{position:fixed;color:#fff;z-index:14;font-size:14px;background:rgba(0,0,0,.5);padding:8px 10px;border-radius:8px;backdrop-filter:blur(4px)}
+  #hud{left:10px;top:10px}
+  #aiHud{right:10px;top:10px;max-width:260px}
+  /* Menu */
+  #menu{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.55);z-index:30}
+  .card{width:min(92vw,620px);background:#111;border:1px solid #222;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.45);color:#eee}
+  .card h1{margin:16px 16px 0;font-size:22px}
+  .card .body{padding:16px;display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .row{display:flex;gap:8px;align-items:center}
+  label{font-size:14px;opacity:.95}
+  select,button{appearance:none;background:#1b1b1b;color:#fff;border:1px solid #2e2e2e;border-radius:10px;padding:10px 12px;font-size:14px}
+  button{cursor:pointer;font-weight:700}
+  button.primary{background:#1e90ff;border-color:#1e90ff}
+  .preview{display:flex;gap:10px;align-items:center}
+  .swatch{width:22px;height:22px;border-radius:6px;border:1px solid rgba(255,255,255,.35)}
+  .footer{display:flex;justify-content:flex-end;gap:10px;padding:0 16px 16px}
+  /* UI sticks */
+  .ui{position:fixed;inset:0;pointer-events:none;z-index:15}
+  .stick{position:absolute;width:170px;height:170px;border-radius:18px;background:rgba(255,255,255,.06);border:2px solid rgba(255,255,255,.12);display:flex;align-items:center;justify-content:center;pointer-events:auto;user-select:none}
+  .pad{position:relative;width:130px;height:130px;border-radius:50%;background:rgba(255,255,255,.05);border:2px dashed rgba(255,255,255,.18)}
+  .knob{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:60px;height:60px;border-radius:50%;background:rgba(255,255,255,.9);box-shadow:0 8px 20px rgba(0,0,0,.35)}
+  #throttle{left:16px;bottom:18px}
+  #steer{right:16px;bottom:18px}
+  .hint{position:absolute;bottom:6px;left:50%;transform:translateX(-50%);color:#fff;font-weight:700;font-size:12px;opacity:.85;text-shadow:0 1px 2px rgba(0,0,0,.5)}
+  #touchThrottle{position:fixed; left:18px; bottom:200px; width:110px; height:110px; border-radius:18px; background:rgba(255,255,255,0.06); border:2px solid rgba(255,255,255,0.12); display:flex; align-items:center; justify-content:center; z-index:16; pointer-events:auto; user-select:none; color:#fff; font-weight:800; font-size:14px; touch-action:none;}
+  #touchThrottle:active{ transform: translateY(1px); }
+  @media (min-width:900px){ #touchThrottle{ display:none } }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud"></div>
+<div id="aiHud"></div>
+<div id="menu">
+  <div class="card">
+    <h1>F1 — 오벌 서킷 (수정판)</h1>
+    <div class="body">
+      <div class="row preview" style="grid-column:1 / -1">
+        <label style="min-width:80px">팀</label>
+        <select id="teamSel"></select>
+        <div id="teamSwatch" class="swatch"></div>
+      </div>
+      <div class="row">
+        <label style="min-width:80px">난이도</label>
+        <select id="diffSel">
+          <option value="easy">Easy</option>
+          <option value="med" selected>Medium</option>
+          <option value="hard">Hard</option>
+          <option value="pro">Pro</option>
+        </select>
+      </div>
+      <div class="row">
+        <label style="min-width:80px">상대 수</label>
+        <select id="numSel">
+          <option>1</option>
+          <option selected>2</option>
+          <option>3</option>
+          <option>4</option>
+        </select>
+      </div>
+      <div class="row" style="grid-column:1 / -1; opacity:.85; font-size:13px">키보드: W/↑ 가속, S/↓ 브레이크, A/D 조향. 모바일: 좌측 큰 가속 버튼 또는 조이스틱 사용.</div>
+    </div>
+    <div class="footer">
+      <button id="startBtn" class="primary">레이스 시작</button>
+    </div>
+  </div>
+</div>
+<div class="ui">
+  <div id="throttle" class="stick">
+    <div class="pad"><div id="knobT" class="knob"></div></div>
+    <div class="hint">가속(위)/브레이크(아래)</div>
+  </div>
+  <div id="steer" class="stick">
+    <div class="pad"><div id="knobS" class="knob"></div></div>
+    <div class="hint">좌/우 조향</div>
+  </div>
+</div>
+<div id="touchThrottle">가속</div>
+<script>
+/* ===== Canvas & Track ===== */
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+function resize(){
+  const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+  const w = Math.floor(window.innerWidth * dpr);
+  const h = Math.floor(window.innerHeight * dpr);
+  canvas.width = w; canvas.height = h;
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  canvas.style.width = window.innerWidth + 'px';
+  canvas.style.height = window.innerHeight + 'px';
+  buildTrack();
+}
+window.addEventListener('resize', resize);
+
+let waypoints=[], finishLine=null;
+const pit = { box:null, gate:null, speedLimit:2.1 };
+
+function buildTrack(){
+  const W = canvas.clientWidth, H = canvas.clientHeight;
+  waypoints = [];
+  const cx = W*0.5, cy = H*0.5, rx = W*0.36, ry = H*0.32;
+  const N = 40;
+  for(let i=0;i<=N;i++){ const t=(i/N)*Math.PI*2; waypoints.push({x:Math.round(cx+Math.cos(t)*rx), y:Math.round(cy+Math.sin(t)*ry)}); }
+
+  // pick a logical "finish index": top-most waypoint (straight)
+  let finishIdx = 0;
+  for(let i=1;i<waypoints.length;i++) if(waypoints[i].y < waypoints[finishIdx].y) finishIdx = i;
+  const prev = waypoints[(finishIdx-1+waypoints.length)%waypoints.length];
+  const next = waypoints[(finishIdx+1)%waypoints.length];
+  // tangent along track
+  const tx = next.x - prev.x, ty = next.y - prev.y; const tlen = Math.hypot(tx,ty)||1;
+  const tangent = { x: tx/tlen, y: ty/tlen };
+  // normal across track (perpendicular) — the zebra band will extend along this normal
+  const normal = { x: -tangent.y, y: tangent.x };
+  const center = { x: waypoints[finishIdx].x, y: waypoints[finishIdx].y };
+  const TW = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--track-width'))||140;
+const span = TW/2 + 5; // 트랙 폭에 맞추고 조금 여유
+
+finishLine = {
+  center: center,
+  a: { x: center.x - normal.x * span, y: center.y - normal.y * span },
+  b: { x: center.x + normal.x * span, y: center.y + normal.y * span },
+  normal: { x: tangent.x, y: tangent.y },
+  angle: Math.atan2(normal.y, normal.x),
+  bandHeight: TW * 0.9 // 밴드 높이도 트랙 폭에 근접
+};
+
+  // pit box and gate
+  const boxW = Math.round(W*0.12), boxH = Math.round(H*0.10);
+  pit.box = { x: Math.round(cx + rx*0.95), y: Math.round(cy - boxH/2), width: boxW, height: boxH };
+  pit.gate = { x: pit.box.x - 60, y: pit.box.y + Math.round(boxH/2) - 30, width: 60, height: 60 };
+}
+
+/* ===== Utils ===== */
+function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
+function dist(a,b){ return Math.hypot(a.x-b.x,a.y-b.y); }
+function pointSegDist(px,py,x1,y1,x2,y2){ const A=px-x1,B=py-y1,C=x2-x1,D=y2-y1,dot=A*C+B*D,lenSq=C*C+D*D; let t=lenSq?(dot/lenSq):-1; t=clamp(t,0,1); const nx=x1+C*t, ny=y1+D*t; return Math.hypot(px-nx,py-ny); }
+function isOnTrack(x,y){ const TW = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--track-width'))||140; const half = TW/2; for(let i=0;i<waypoints.length-1;i++){ const a=waypoints[i], b=waypoints[i+1]; if(pointSegDist(x,y,a.x,a.y,b.x,b.y) <= half-6) return true; } return false; }
+function lineIntersect(p1,p2,q1,q2){ const s1x=p2.x-p1.x,s1y=p2.y-p1.y,s2x=q2.x-q1.x,s2y=q2.y-q1.y,den=(-s2x*s1y+s1x*s2y); if(den===0) return null; const s=(-s1y*(p1.x-q1.x)+s1x*(p1.y-q1.y))/den; const t=( s2x*(p1.y-q1.y)-s2y*(p1.x-q1.x))/den; if(s>=0&&s<=1&&t>=0&&t<=1) return {x:p1.x+(t*s1x),y:p1.y+(t*s1y)}; return null; }
+function rectContains(x,y,r){ return x>=r.x && x<=r.x+r.width && y>=r.y && y<=r.y+r.height; }
+function lerpAngle(a,b,t){ // shortest rotation lerp
+  let diff = b - a; if(diff > Math.PI) diff -= Math.PI*2; if(diff < -Math.PI) diff += Math.PI*2; return a + diff * t; }
+
+/* ===== Input ===== */
+const keys = {};
+addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
+addEventListener('keyup',   e => keys[e.key.toLowerCase()] = false);
+const throttle = { y:0 }; const steer = { x:0 };
+function makeStick(wrapId, knobId, axis, axisKey){ const wrap=document.getElementById(wrapId), knob=document.getElementById(knobId); const radius=55; let active=false; const getPos=(e)=>{ const r=wrap.getBoundingClientRect(); const cx=r.left+r.width/2, cy=r.top+r.height/2; let px,py; if(e.touches&&e.touches[0]){px=e.touches[0].clientX; py=e.touches[0].clientY;} else {px=e.clientX; py=e.clientY;} return {cx,cy,px,py}; }; const start=(e)=>{ e.preventDefault(); active=true; move(e); }; const end=(e)=>{ e.preventDefault(); active=false; knob.style.left='50%'; knob.style.top='50%'; if(axisKey==='x') axis.x=0; else axis.y=0; }; const move=(e)=>{ if(!active) return; e.preventDefault(); const {cx,cy,px,py}=getPos(e); let dx=px-cx, dy=py-cy; const L=Math.hypot(dx,dy); const M=radius; if(L>M){dx=dx/L*M; dy=dy/L*M;} knob.style.left=(50+dx/M*50)+'%'; knob.style.top=(50+dy/M*50)+'%'; if(axisKey==='x') axis.x = clamp(dx/M,-1,1); else axis.y = clamp(dy/M,-1,1); };
+  wrap.addEventListener('touchstart', start, {passive:false}); wrap.addEventListener('touchmove', move, {passive:false}); wrap.addEventListener('touchend', end, {passive:false}); wrap.addEventListener('mousedown', start); window.addEventListener('mousemove', move); window.addEventListener('mouseup', end);
+}
+makeStick('steer','knobS',steer,'x'); makeStick('throttle','knobT',throttle,'y');
+
+const bigThrottle = document.getElementById('touchThrottle'); let bigActive=false; function setBig(v){ bigActive = !!v; if(bigActive) throttle.y = -1; else throttle.y = 0; bigThrottle.style.background = bigActive ? 'rgba(180,30,30,0.95)' : 'rgba(255,255,255,0.06)'; }
+bigThrottle.addEventListener('touchstart', e=>{ e.preventDefault(); setBig(true); }, {passive:false}); bigThrottle.addEventListener('touchend', e=>{ e.preventDefault(); setBig(false); }, {passive:false}); bigThrottle.addEventListener('mousedown', e=>{ e.preventDefault(); setBig(true); }); window.addEventListener('mouseup', ()=>setBig(false));
+
+/* ===== Car ===== */
+class Car{
+  constructor({color='#fff',isAI=false,name='',base=3.0,aggr=0}, spawn){
+    this.x=spawn.x; this.y=spawn.y; this.prev={x:this.x,y:this.y}; this.angle=0; this.speed=0; this.color=color; this.isAI=isAI; this.name=name; this.base=base; this.aggr=aggr; this.acc=isAI?0.14:0.20; this.brake=0.48; this.turn=0.085; this.lap=0; this.lastCross=0; this.fuel=100; this.tire=100; this.inPit=false; this.inBox=false; this.target=0; this.visited=new Array(waypoints.length).fill(false); this.visCount=0; }
+
+  get maxSpeed(){ let s=this.isAI?this.base:5.6; if(this.fuel<22) s*=0.9; if(this.tire<30) s*=0.88; if(this.inPit) s=Math.min(s,pit.speedLimit); return s; }
+
+  inputUpdate(){ if(this.isAI) return; const kA=keys['a']||keys['arrowleft']; const kD=keys['d']||keys['arrowright']; const kW=keys['w']||keys['arrowup']; const kS=keys['s']||keys['arrowdown']; const steerVal = clamp((kA?-1:0)+(kD?1:0)+steer.x,-1,1); const thrust = clamp((kW?-1:0)+(kS?1:0)+throttle.y,-1,1); this.angle += steerVal * this.turn; if(thrust < -0.05){ this.speed = Math.min(this.speed + this.acc * (1+0.6*(-thrust)), this.maxSpeed); } else if(thrust > 0.05){ this.speed = Math.max(this.speed - this.brake * (0.6+thrust), -2.0); } else { this.speed *= 0.992; } }
+
+  // pure pursuit with smoothing and stable targets
+  findNearestIndex(){ let nearest=0, nd=1e9; for(let i=0;i<waypoints.length;i++){ const d=(this.x-waypoints[i].x)**2 + (this.y-waypoints[i].y)**2; if(d<nd){ nd=d; nearest=i; } } return nearest; }
+
+  aiUpdate(others){ if(!this.isAI) return; // determine lookahead and target
+    const baseLook = clamp(80 + Math.abs(this.speed)*36, 70, 300);
+    const nearest = this.findNearestIndex();
+    // pick a target index ahead by steps proportional to look
+    let accd = 0; let idx = nearest; let last = {x:this.x,y:this.y}; for(let i=0;i<waypoints.length;i++){ const w = waypoints[(idx+i)%waypoints.length]; const seg = Math.hypot(w.x-last.x, w.y-last.y); accd += seg; last = w; if(accd >= baseLook){ idx = (idx+i)%waypoints.length; break; } }
+    const aim = waypoints[idx];
+    const dx = aim.x - this.x, dy = aim.y - this.y; const desired = Math.atan2(dy,dx);
+    // smooth steering towards desired angle (lerp) to avoid twitch
+    const speedFactor = clamp(Math.abs(this.speed)/Math.max(0.1,this.maxSpeed), 0.2, 1.0);
+    const steerLerp = 0.06 + speedFactor*0.06 + this.aggr*0.02; // more aggressive => quicker steering
+    this.angle = lerpAngle(this.angle, desired, steerLerp);
+
+    // compute desired speed based on curvature and proximity
+    const near = waypoints[(idx+2)%waypoints.length];
+    const nd = Math.hypot(near.x - this.x, near.y - this.y);
+    const cornerFactor = clamp(nd/220, 0.45, 1.0);
+    let desiredSpeed = Math.min(this.maxSpeed * 0.98 * cornerFactor, this.maxSpeed);
+
+    // gentle overtaking behavior: if car ahead and close, nudge and speed up slightly
+    if(others){
+      for(const o of others){ if(o===this) continue; const dxo=o.x-this.x, dyo=o.y-this.y; const d = Math.hypot(dxo,dyo); const fwd = Math.cos(this.angle)*dxo + Math.sin(this.angle)*dyo; if(fwd > 10 && d < 100){ // car ahead
+            // small lateral nudge, limited
+            const side = ( (Math.sin(this.angle)*dxo - Math.cos(this.angle)*dyo) > 0 ) ? 1 : -1;
+            this.angle = lerpAngle(this.angle, this.angle + 0.02*side*(1+this.aggr), 0.6);
+            desiredSpeed = Math.min(desiredSpeed, o.speed*1.04 + 0.2*(1+this.aggr));
+      } }
+    }
+
+    // accelerate/brake towards desiredSpeed smoothly
+    if(this.speed < desiredSpeed - 0.06) this.speed = Math.min(this.speed + this.acc*(1+this.aggr*0.3), desiredSpeed);
+    else if(this.speed > desiredSpeed + 0.06) this.speed = Math.max(this.speed - this.brake*0.6, desiredSpeed);
+    else this.speed *= 0.996;
+  }
+
+  physics(){ // friction & resources
+    this.speed *= 0.987; if(Math.abs(this.speed) > 0.08){ this.fuel = Math.max(0, this.fuel - 0.0065); this.tire = Math.max(0, this.tire - 0.0045); }
+    this.prev.x = this.x; this.prev.y = this.y;
+    const nx = this.x + Math.cos(this.angle)*this.speed; const ny = this.y + Math.sin(this.angle)*this.speed;
+    const onTrack = isOnTrack(nx,ny); const inBox = rectContains(nx,ny,pit.box); const inGate = rectContains(nx,ny,pit.gate);
+    if(this.inPit){ if(inBox||inGate){ this.x=nx; this.y=ny; } else { this.speed*=0.6; } if(inBox){ this.inBox=true; this.speed*=0.95; this.fuel=Math.min(100,this.fuel+0.9); this.tire=Math.min(100,this.tire+0.65);} else this.inBox=false; if(inGate && isOnTrack(nx-20,ny)) { this.inPit=false; this.speed=Math.min(this.speed,2.2); } } else { if(onTrack){ this.x=nx; this.y=ny; } else if(inGate){ this.inPit=true; this.x=nx; this.y=ny; this.speed=Math.min(this.speed,pit.speedLimit); } else { // bounce but milder
+        this.speed *= -0.22; this.angle += (Math.random()*0.18 - 0.09);
+    } }
+    // visited
+    for(let i=0;i<waypoints.length;i++){ if(!this.visited[i] && dist(this,waypoints[i]) < 64){ this.visited[i]=true; this.visCount++; } }
+  }
+
+  lapCheck(totalLaps){ const hit = lineIntersect(this.prev,{x:this.x,y:this.y}, finishLine.a, finishLine.b); if(!hit) return; const now = Date.now(); if(now - this.lastCross < 900) return; const mv = {x:this.x - this.prev.x, y:this.y - this.prev.y}; const dot = mv.x*finishLine.normal.x + mv.y*finishLine.normal.y; const forward = dot > 0.05; const progOK = (this.visCount/waypoints.length) >= 0.65; if(forward && progOK){ this.lap++; this.visited.fill(false); this.visCount=0; this.lastCross=now; if(!this.isAI && this.lap>=TOTAL_LAPS) setTimeout(()=>alert('🎉 완주!'),50); } else this.lastCross=now; }
+
+  draw(){ ctx.save(); ctx.translate(this.x,this.y); ctx.rotate(this.angle); // revert to previous simple triangular car (as requested)
+    ctx.fillStyle=this.color; ctx.beginPath(); ctx.moveTo(-16,0); ctx.lineTo(-2,-9); ctx.lineTo(18,0); ctx.lineTo(-2,9); ctx.closePath(); ctx.fill(); ctx.fillStyle='#c7c7c7'; ctx.fillRect(-18,-6,5,12); ctx.fillRect(13,-6,5,12); ctx.fillStyle='#000'; ctx.fillRect(-12,-10,4,4); ctx.fillRect(-12,6,4,4); ctx.fillRect(8,-10,4,4); ctx.fillRect(8,6,4,4); ctx.restore(); }
+}
+
+/* ===== Game state & drawing ===== */
+const hud=document.getElementById('hud'); const aiHud=document.getElementById('aiHud'); let player=null, AIs=[]; const TOTAL_LAPS = 8;
+
+function drawTrack(){ ctx.fillStyle='#86b06a'; ctx.fillRect(0,0,canvas.clientWidth,canvas.clientHeight); const TW = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--track-width'))||140; ctx.lineCap='round'; ctx.lineJoin='round'; ctx.strokeStyle='#303030'; ctx.lineWidth=TW; ctx.beginPath(); ctx.moveTo(waypoints[0].x,waypoints[0].y); for(let i=1;i<waypoints.length;i++) ctx.lineTo(waypoints[i].x,waypoints[i].y); ctx.closePath(); ctx.stroke(); ctx.strokeStyle='#6b3f22'; ctx.lineWidth=6; ctx.beginPath(); ctx.moveTo(waypoints[0].x,waypoints[0].y); for(let i=1;i<waypoints.length;i++) ctx.lineTo(waypoints[i].x,waypoints[i].y); ctx.closePath(); ctx.stroke(); ctx.setLineDash([14,14]); ctx.strokeStyle='#fff'; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(waypoints[0].x,waypoints[0].y); for(let i=1;i<waypoints.length;i++) ctx.lineTo(waypoints[i].x,waypoints[i].y); ctx.closePath(); ctx.stroke(); ctx.setLineDash([]);
+  // draw zebra band using rotated transform (perpendicular to track)
+  if(finishLine){
+  const center = finishLine.center;
+  const angle = finishLine.angle;
+  const span = Math.hypot(finishLine.b.x - finishLine.a.x, finishLine.b.y - finishLine.a.y)/2;
+
+  const cell = 14;               // 정사각형 칸 크기 (작을수록 세밀한 체크무늬)
+  const bandH = finishLine.bandHeight * 0.2;  // 두께 얇게 (기존 대비 40%)
+
+  ctx.save();
+  ctx.translate(center.x, center.y);
+  ctx.rotate(angle);
+
+  for(let x=-span; x < span; x += cell){
+    for(let y=-bandH/2; y < bandH/2; y += cell){
+      const ix = Math.floor((x+span)/cell);
+      const iy = Math.floor((y+bandH/2)/cell);
+      ctx.fillStyle = ((ix+iy) % 2 === 0) ? '#fff' : '#000';
+      ctx.fillRect(x, y, cell, cell);
+    }
+  }
+
+  ctx.restore();
+}
+
+  // pit box & gate
+  ctx.fillStyle='rgba(255,255,255,0.08)'; ctx.fillRect(pit.box.x,pit.box.y,pit.box.width,pit.box.height); ctx.fillStyle='rgba(0,180,255,0.20)'; ctx.fillRect(pit.gate.x,pit.gate.y,pit.gate.width,pit.gate.height);
+}
+
+function drawScene(){ ctx.clearRect(0,0,canvas.clientWidth,canvas.clientHeight); drawTrack(); if(player) player.draw(); AIs.forEach(a=>a.draw()); if(player){ hud.innerHTML = `LAP ${player.lap}/${TOTAL_LAPS} | SPEED ${(player.speed*60).toFixed(0)} | FUEL ${player.fuel.toFixed(0)}% | TIRE ${player.tire.toFixed(0)}%`; aiHud.innerHTML = `<b>AI (${AIs.length})</b><br>` + AIs.map((a,i)=>`#${i+1} (${a.base.toFixed(1)}) — Lap ${a.lap}`).join('<br>'); } }
+
+/* ===== Loop ===== */
+let running=false; function loop(){ if(!running) return; player.inputUpdate(); player.physics(); player.lapCheck(TOTAL_LAPS); for(const a of AIs){ a.aiUpdate([player, ...AIs]); a.physics(); a.lapCheck(TOTAL_LAPS); } drawScene(); requestAnimationFrame(loop); }
+
+/* ===== Menu & setup ===== */
+const TEAMS=[ {name:'Red Bull', color:'#b30000'}, {name:'Ferrari', color:'#dc0000'}, {name:'Mercedes', color:'#00D2BE'}, {name:'McLaren', color:'#FF8700'}, {name:'Aston Martin', color:'#006F62'}, {name:'Williams', color:'#005AFF'} ];
+const DIFF = { easy:{base:2.2,aggr:0}, med:{base:2.8,aggr:0.15}, hard:{base:3.4,aggr:0.28}, pro:{base:4.0,aggr:0.45} };
+const teamSel=document.getElementById('teamSel'); const diffSel=document.getElementById('diffSel'); const numSel=document.getElementById('numSel'); const teamSwatch=document.getElementById('teamSwatch'); TEAMS.forEach((t,i)=>{ const o=document.createElement('option'); o.value=i; o.textContent=t.name; teamSel.appendChild(o); }); teamSel.value=0; teamSwatch.style.background = TEAMS[0].color; teamSel.addEventListener('change', ()=> teamSwatch.style.background = TEAMS[teamSel.value|0].color);
+
+function spawnGrid(n){ // spawn left of finish band
+  const center = finishLine.center; const tangent = finishLine.normal; const left = { x: center.x - tangent.x*40, y: center.y - tangent.y*40 }; const res=[]; for(let i=0;i<n;i++){ res.push({ x: left.x - i*48, y: left.y + (i%2?12:-12) }); } return res; }
+
+function startGame(){ // ensure track correctly built before spawns
+  buildTrack(); resize(); document.getElementById('menu').style.display='none'; const team = TEAMS[teamSel.value|0]; const diff = DIFF[diffSel.value]; const num = parseInt(numSel.value,10); const grid = spawnGrid(Math.max(1,num+1)); player = new Car({color:team.color, isAI:false}, grid[0]); AIs = []; for(let i=0;i<num;i++){ const c = TEAMS[(i+1)%TEAMS.length].color; const ai = new Car({color:c, isAI:true, name:'AI'+(i+1), base:diff.base + i*0.12, aggr: diff.aggr + i*0.04}, grid[i+1]); ai.angle = (Math.random()*0.15 - 0.075); AIs.push(ai); } running=true; loop(); }
+
+document.getElementById('startBtn').addEventListener('click', startGame);
+/* init visuals */ buildTrack(); resize(); drawScene();
+</script>
+</body>
+</html>
